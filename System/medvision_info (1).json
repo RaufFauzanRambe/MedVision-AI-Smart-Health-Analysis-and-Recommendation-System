@@ -1,0 +1,38 @@
+{
+  "name": "MedVision-AI",
+  "full_name": "MedVision-AI Smart Health Analysis and Recommendation System",
+  "version": "1.0.0",
+  "description": "A pure-Python smart health analysis and recommendation system that scores an all-round health profile (vitals, labs, lifestyle) on a 0-100 composite scale, estimates personalized disease-risk with a hybrid rule-engine + machine-learning approach, and generates prioritized, actionable wellness recommendations.",
+  "author": "MedVision-AI Team",
+  "license": "MIT",
+  "created": "2026-10-25",
+  "python_requires": ">=3.8",
+  "dependencies": {
+    "required": [],
+    "optional": [
+      "scikit-learn>=1.0 (enables the RandomForest risk model; system falls back to the built-in rule engine when absent)",
+      "numpy (used by scikit-learn; not required for the rule-based path)"
+    ]
+  },
+  "modules": {
+    "config.py": "Central configuration: file paths, clinical reference ranges, scoring weights, risk-factor points, disclaimer text.",
+    "validation.py": "Input sanitization and clinical range validation for user profiles and health records.",
+    "data_manager.py": "Thread-safe JSON persistence layer (users + health records) with atomic writes and demo data seeding.",
+    "health_analyzer.py": "Rule-based analysis engine: BMI / blood-pressure / glucose / lipid / sleep / activity classification plus a weighted 0-100 composite health score and trend detection.",
+    "recommendation_engine.py": "Turns analysis results into prioritized, personalized recommendations and a 7-day wellness plan.",
+    "model_manager.py": "Hybrid AI layer: interpretable rule-based risk scoring, optional scikit-learn RandomForest model (weak-supervision training with graceful fallback).",
+    "__init__.py": "Public API facade (MedVisionSystem), package metadata, and the built-in run_demo() showcase."
+  },
+  "features": [
+    "All-round health profile: BMI, blood pressure, fasting glucose, lipid panel, resting heart rate, sleep, activity, hydration and lifestyle habits",
+    "Weighted composite health score (0-100) with per-category subscores",
+    "Hybrid risk prediction: rule engine always available, optional scikit-learn RandomForest upgrades the estimator automatically",
+    "Prioritized recommendations (urgent / high / moderate / low / positive) with concrete action items",
+    "Personalized 7-day wellness plan",
+    "Longitudinal trend analysis across historical records",
+    "Thread-safe, atomic JSON persistence with seedable demo dataset (4 sample users)",
+    "Strict input validation with clinical plausibility ranges",
+    "Medical-disclaimer messaging in README, package banner and every recommendation set"
+  ],
+  "disclaimer": "MedVision-AI is an educational software demonstration. It is NOT a medical device and does NOT provide medical diagnosis, treatment, or advice. Always consult a qualified healthcare professional regarding any medical condition or before making changes to your diet, exercise, or medication."
+}
