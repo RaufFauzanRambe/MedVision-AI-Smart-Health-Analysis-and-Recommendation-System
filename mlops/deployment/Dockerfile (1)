@@ -1,0 +1,77 @@
+# syntax=docker/dockerfile:1.6
+# =============================================================================
+# MedVision-AI Smart Health Analysis and Recommendation System
+# Multi-stage Dockerfile — build dependencies, then ship a slim runtime image.
+# =============================================================================
+
+ARG PYTHON_VERSION=3.11-slim
+ARG APP_HOME=/opt/medvision
+
+# -----------------------------------------------------------------------------
+# Stage 1 — Builder: install dependencies into an isolated prefix
+# -----------------------------------------------------------------------------
+FROM python:${PYTHON_VERSION} AS builder
+
+ARG APP_HOME
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /build
+
+# System build deps (kept inside builder only)
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        build-essential \
+        curl \
+        libffi-dev \
+        libssl-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies into /install so we can copy them cleanly
+COPY requirements.txt .
+RUN python -m venv /install/venv \
+ && /install/venv/bin/pip install --upgrade pip setuptools wheel \
+ && /install/venv/bin/pip install --prefix=/install -r requirements.txt
+
+# -----------------------------------------------------------------------------
+# Stage 2 — Runtime: lean, non-root, no compilers
+# -----------------------------------------------------------------------------
+FROM python:${PYTHON_VERSION} AS runtime
+
+ARG APP_HOME
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    APP_HOST=0.0.0.0 \
+    APP_PORT=8000 \
+    LOG_LEVEL=INFO \
+    PYTHONPATH=${APP_HOME}
+
+# Minimal runtime system packages
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        curl \
+        tini \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --system --gid 1001 medvision \
+ && useradd  --system --uid 1001 --gid medvision \
+             --home-dir ${APP_HOME} --create-home \
+             --shell /usr/sbin/nologin medvision
+
+# Copy installed Python packages from the builder
+COPY --from=builder /install /usr/local
+
+# Application source
+WORKDIR ${APP_HOME}
+COPY --chown=medvision:medvision . ${APP_HOME}
+
+USER medvision
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python ${APP_HOME}/mlops/deployment/healthcheck.py || exit 1
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["python", "-m", "medvision.server", "--host", "0.0.0.0", "--port", "8000"]

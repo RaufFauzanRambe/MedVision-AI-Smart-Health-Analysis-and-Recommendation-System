@@ -1,0 +1,107 @@
+# =============================================================================
+# MedVision-AI — Docker Compose
+# Local / staging orchestration: api + worker + redis + postgres
+# =============================================================================
+version: "3.9"
+
+services:
+  # ---------------------------------------------------------------------------
+  # Main inference API
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: ../..
+      dockerfile: mlops/deployment/Dockerfile
+    image: medvision-ai:${TAG:-latest}
+    container_name: medvision-api
+    restart: unless-stopped
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8000
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MODEL_NAME: ${MODEL_NAME:-medvision-v1}
+      MODEL_VERSION: ${MODEL_VERSION:-latest}
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql+psycopg://medvision:${POSTGRES_PASSWORD:-medvision}@postgres:5432/medvision
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      - medvision-models:/opt/medvision/models
+      - medvision-logs:/opt/medvision/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "/opt/medvision/mlops/deployment/healthcheck.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - medvision-net
+
+  # ---------------------------------------------------------------------------
+  # Async worker (queues / scheduled jobs)
+  # ---------------------------------------------------------------------------
+  worker:
+    image: medvision-ai:${TAG:-latest}
+    container_name: medvision-worker
+    restart: unless-stopped
+    command: ["python", "-m", "medvision.worker"]
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql+psycopg://medvision:${POSTGRES_PASSWORD:-medvision}@postgres:5432/medvision
+    depends_on:
+      - api
+    volumes:
+      - medvision-models:/opt/medvision/models
+      - medvision-logs:/opt/medvision/logs
+    networks:
+      - medvision-net
+
+  # ---------------------------------------------------------------------------
+  # Cache / message broker
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: medvision-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - medvision-redis:/data
+    networks:
+      - medvision-net
+
+  # ---------------------------------------------------------------------------
+  # Metadata database
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: medvision-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: medvision
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-medvision}
+      POSTGRES_DB: medvision
+    volumes:
+      - medvision-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medvision -d medvision"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - medvision-net
+
+networks:
+  medvision-net:
+    driver: bridge
+
+volumes:
+  medvision-models:
+  medvision-logs:
+  medvision-redis:
+  medvision-pg:
