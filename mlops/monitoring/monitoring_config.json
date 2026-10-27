@@ -1,0 +1,51 @@
+{
+  "service": {
+    "name": "medvision-ai",
+    "version": "1.0.0",
+    "environment": "${APP_ENV:-development}"
+  },
+  "health_check": {
+    "host": "${APP_HOST:-127.0.0.1}",
+    "port": "${APP_PORT:-8000}",
+    "liveness_path": "/health",
+    "readiness_path": "/ready",
+    "timeout_seconds": 5,
+    "interval_seconds": 30,
+    "failure_threshold": 3
+  },
+  "dependencies": [
+    {"name": "redis",   "kind": "tcp",    "target": "${REDIS_URL:-redis://redis:6379/0}"},
+    {"name": "postgres","kind": "tcp",    "target": "${DATABASE_URL:-postgresql://postgres:5432/medvision}"}
+  ],
+  "metrics": {
+    "namespace": "medvision",
+    "latency_buckets_seconds": [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
+    "request_size_bytes_buckets": [128, 512, 2048, 8192, 32768, 131072],
+    "model_confidence_buckets": [0.0, 0.2, 0.4, 0.6, 0.8, 0.9, 0.95, 0.99, 1.0]
+  },
+  "alerts": {
+    "error_rate_threshold_pct": 5,
+    "p95_latency_threshold_seconds": 2.0,
+    "data_quality_min_completeness_pct": 95,
+    "evaluation_window_minutes": 15
+  },
+  "logging": {
+    "level": "${LOG_LEVEL:-INFO}",
+    "format": "json",
+    "redact_fields": [
+      "name", "patient_name", "full_name",
+      "email", "phone", "address",
+      "ssn", "national_id", "mrn", "medical_record_number",
+      "dob", "date_of_birth",
+      "password", "api_key", "token", "authorization"
+    ],
+    "sampling_rate": 1.0,
+    "retention_days": 30
+  },
+  "evaluation": {
+    "reference_labels_required": true,
+    "metrics": ["precision", "recall", "f1", "roc_auc", "calibration_error"],
+    "min_sample_size": 200,
+    "warn_if_below_samples": 50
+  }
+}
