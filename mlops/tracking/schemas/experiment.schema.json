@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://medvision.ai/schemas/experiment.schema.json",
+  "title": "MedVision-AI Experiment Manifest",
+  "description": "Schema for an experiment manifest used by run_experiment.py and downstream audit tooling. A manifest fully describes the inputs, parameters, and outputs expected for a single tracked run.",
+  "type": "object",
+  "required": ["name", "entrypoint", "experiment"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Human-readable experiment name, must match [A-Za-z0-9_\\- ]+."
+    },
+    "description": {
+      "type": "string",
+      "description": "Long-form description of the experiment's intent."
+    },
+    "entrypoint": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_\\.]*:[A-Za-z_][A-Za-z0-9_]*$",
+      "description": "Dotted path module:attr entrypoint for the experiment runner."
+    },
+    "experiment": {
+      "type": "string",
+      "description": "MLflow experiment name (a logical container for related runs)."
+    },
+    "run_name": {
+      "type": ["string", "null"],
+      "description": "Optional explicit run name; auto-generated when null."
+    },
+    "config": {
+      "type": ["string", "null"],
+      "description": "Path to an optional YAML config file with additional parameters."
+    },
+    "params": {
+      "type": "object",
+      "description": "Hyperparameters and constants to log to MLflow.",
+      "additionalProperties": {
+        "type": ["string", "number", "boolean", "null"]
+      }
+    },
+    "tags": {
+      "type": "object",
+      "description": "Tags applied to the run (project, team, etc.).",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "autolog": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether to enable MLflow framework autologging."
+    },
+    "dataset": {
+      "type": "object",
+      "description": "Dataset reference(s) consumed by this experiment.",
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": ["string", "integer"] },
+        "uri": { "type": "string", "format": "uri" },
+        "checksum": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "description": "SHA256 checksum of the dataset artifact."
+        }
+      },
+      "required": ["name"]
+    },
+    "metrics": {
+      "type": "array",
+      "description": "Names of metrics that this experiment is expected to log.",
+      "items": { "type": "string" }
+    },
+    "reproducibility": {
+      "type": "object",
+      "properties": {
+        "seed": { "type": "integer", "minimum": 0 },
+        "deterministic": { "type": "boolean" }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "properties": {
+        "max_train_minutes": { "type": "integer", "minimum": 1 },
+        "max_gpus": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

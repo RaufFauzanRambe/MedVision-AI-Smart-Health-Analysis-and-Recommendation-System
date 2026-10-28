@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://medvision.ai/schemas/metrics.schema.json",
+  "title": "MedVision-AI Metrics Record",
+  "description": "Schema for a metrics record logged to MLflow. Used by metrics_logger.py to validate inputs, and by downstream audit tooling to verify that a run produced all expected metrics.",
+  "type": "object",
+  "required": ["run_id", "step", "metrics"],
+  "additionalProperties": false,
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "description": "MLflow run ID that owns these metrics."
+    },
+    "step": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Zero-indexed step at which the metrics were logged."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp of when the metrics were captured."
+    },
+    "metrics": {
+      "type": "object",
+      "description": "Mapping of metric name -> numeric value. All values must be finite floats.",
+      "minProperties": 1,
+      "patternProperties": {
+        "^[A-Za-z0-9_.\\-/ ]+$": {
+          "type": "number",
+          "not": { "type": "number", "enum": [Infinity, -Infinity] }
+        }
+      },
+      "additionalProperties": false
+    },
+    "context": {
+      "type": "object",
+      "description": "Optional structured context describing where the metrics came from (e.g. fold id, evaluation split).",
+      "properties": {
+        "phase": {
+          "type": "string",
+          "enum": ["train", "validation", "test", "calibration"]
+        },
+        "fold": { "type": "integer", "minimum": 0 },
+        "split_name": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "healthcare_metadata": {
+      "type": "object",
+      "description": "Optional MedVision-specific metadata, e.g. subgroup identifiers for fairness audits.",
+      "properties": {
+        "subgroups": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "sensitive_attribute": { "type": "string" },
+        "fairness_threshold": { "type": "number", "minimum": 0, "maximum": 1 }
+      },
+      "additionalProperties": false
+    }
+  }
+}
