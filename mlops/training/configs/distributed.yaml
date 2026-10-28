@@ -1,0 +1,49 @@
+# distributed.yaml
+# ================
+# Distributed (single-node, multi-GPU) training overrides for MedVision-AI.
+#
+# Layer on top of default.yaml via:
+#     cfg = TrainingConfig.from_yaml("configs/default.yaml")
+#     cfg.merge_yaml("configs/distributed.yaml")
+#
+# Expects to be launched with torchrun, e.g.:
+#     torchrun --nproc-per-node=4 -m medvision.train \
+#         --config mlops/training/configs/distributed.yaml
+
+experiment_name: medvision_distributed
+run_name: ddp_4gpu
+epochs: 50
+mixed_precision: bf16               # bf16 is faster than fp16 on A100/H100
+
+# Scale batch size by world_size — per-GPU batch stays at 32.
+dataset:
+  batch_size: 128                   # = 32 * 4 GPUs
+  num_workers: 8                     # 2 per GPU
+  augment: true
+  image_size: [384, 384]            # larger image, more compute available
+
+optimizer:
+  name: adamw
+  lr: 0.0005                        # scales with effective batch size
+  weight_decay: 0.05
+  scheduler: cosine
+  warmup_epochs: 3
+  grad_clip: 1.0
+
+distributed:
+  strategy: ddp
+  world_size: 4                     # set to actual GPU count at launch
+  backend: nccl
+  sync_bn: true
+  find_unused_params: false
+
+checkpoint:
+  dir: checkpoints/ddp
+  save_top_k: 3
+  monitor_metric: val_loss
+  monitor_mode: min
+
+reproducibility:
+  seed: 42
+  deterministic: false              # trade determinism for speed in DDP
+  cudnn_benchmark: true

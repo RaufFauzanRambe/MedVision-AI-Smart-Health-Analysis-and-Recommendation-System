@@ -1,0 +1,93 @@
+# default.yaml
+# =============
+# Default training configuration for the MedVision-AI project.
+#
+# This file is the *base* config — most runs layer one of the other
+# shipped configs (baseline.yaml, distributed.yaml) on top via
+# TrainingConfig.merge_yaml() to override only the keys that change.
+
+# ----------------------------------------------------------------
+# Top-level knobs
+# ----------------------------------------------------------------
+experiment_name: medvision_default
+run_name: null
+epochs: 30
+max_steps: null
+eval_every_n_epochs: 1
+log_every_n_steps: 50
+early_stopping_patience: 5
+mixed_precision: fp16            # none|fp16|bf16
+gradient_accumulation_steps: 1
+
+# ----------------------------------------------------------------
+# Model
+# ----------------------------------------------------------------
+model:
+  name: resnet50                 # resnet50|efficientnet_b0|vit_base|custom
+  params: {}
+  pretrained: true
+  num_classes: 2
+
+# ----------------------------------------------------------------
+# Dataset
+# ----------------------------------------------------------------
+dataset:
+  train_path: data/processed/train
+  val_path: data/processed/val
+  test_path: data/processed/test
+  batch_size: 32
+  num_workers: 4
+  augment: true
+  image_size: [224, 224]
+  channels_first: true
+
+# ----------------------------------------------------------------
+# Optimizer + scheduler
+# ----------------------------------------------------------------
+optimizer:
+  name: adam                     # adam|adamw|sgd
+  lr: 0.001
+  weight_decay: 0.0
+  momentum: 0.9                  # used only by sgd-family
+  scheduler: cosine              # none|cosine|step|exponential
+  scheduler_params: {}
+  warmup_epochs: 0
+  grad_clip: 5.0
+
+# ----------------------------------------------------------------
+# Distributed
+# ----------------------------------------------------------------
+distributed:
+  strategy: single               # single|ddp|fsdp
+  world_size: 1
+  backend: nccl                  # nccl|gloo|mpi
+  local_rank: 0
+  sync_bn: false
+  find_unused_params: false
+
+# ----------------------------------------------------------------
+# Checkpointing
+# ----------------------------------------------------------------
+checkpoint:
+  dir: checkpoints
+  save_every_n_epochs: 1
+  save_top_k: 3
+  monitor_metric: val_loss
+  monitor_mode: min
+  resume_from: null
+  save_optimizer_state: true
+  save_metadata: true
+
+# ----------------------------------------------------------------
+# Reproducibility
+# ----------------------------------------------------------------
+reproducibility:
+  seed: 42
+  deterministic: true
+  cudnn_benchmark: false
+  python_hash_seed: "0"
+
+# ----------------------------------------------------------------
+# Free-form extras (passed through to the training loop)
+# ----------------------------------------------------------------
+extras: {}

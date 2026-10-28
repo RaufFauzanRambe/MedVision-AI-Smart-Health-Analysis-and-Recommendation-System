@@ -1,0 +1,45 @@
+# baseline.yaml
+# =============
+# Baseline experiment for MedVision-AI classification tasks.
+#
+# A short, fast, reproducible configuration meant to establish a
+# "minimum acceptable" performance reference. Any PR that regresses
+# against this baseline should be blocked from merge.
+
+experiment_name: medvision_baseline
+run_name: baseline_v1
+epochs: 10
+eval_every_n_epochs: 1
+log_every_n_steps: 50
+early_stopping_patience: 3
+mixed_precision: fp16
+
+model:
+  name: resnet50
+  pretrained: true
+  num_classes: 2
+
+dataset:
+  batch_size: 64
+  num_workers: 4
+  augment: true
+  image_size: [224, 224]
+
+optimizer:
+  name: adam
+  lr: 0.0003
+  weight_decay: 0.0001
+  scheduler: cosine
+  warmup_epochs: 1
+  grad_clip: 5.0
+
+checkpoint:
+  dir: checkpoints/baseline
+  save_top_k: 1
+  monitor_metric: val_loss
+  monitor_mode: min
+
+reproducibility:
+  seed: 42
+  deterministic: true
+  cudnn_benchmark: false
