@@ -1,0 +1,47 @@
+# tracking.yaml
+# =============
+# Centralized MLflow tracking configuration for the MedVision-AI project.
+#
+# Override this file's location at runtime by setting:
+#     export MEDVISION_TRACKING_CONFIG=/path/to/your/tracking.yaml
+#
+# All values map directly to MLflowConfig dataclass fields
+# (see mlflow_config.py).
+
+# Tracking URI -------------------------------------------------------
+# Local filesystem store by default. For shared deployments, point
+# this at an MLflow Tracking Server, e.g.:
+#   tracking_uri: http://mlflow.medvision.internal:5000
+# or for Databricks:
+#   tracking_uri: databricks
+tracking_uri: file:///tmp/medvision/mlruns
+
+# Model Registry URI -------------------------------------------------
+# When omitted, MLflow falls back to tracking_uri. Set explicitly
+# only when the registry lives at a different location.
+registry_uri: null
+
+# Default experiment name -------------------------------------------
+# Used when ExperimentLogger(experiment=...) is None.
+experiment_name: medvision_default
+
+# Run-name prefix ----------------------------------------------------
+# Combined with UTC timestamp to produce e.g.
+#     medvision_20251028_093015_resnet_baseline
+run_name_prefix: medvision
+
+# Default tags applied to every run --------------------------------
+# Useful for stamping environment or project metadata.
+tags:
+  project: MedVision-AI
+  team: ai-platform
+  cost_center: research
+
+# Enable framework autologging (sklearn, pytorch, etc.) -------------
+# Disabled by default; opt in per-run via ExperimentLogger(autolog=True).
+autolog: false
+
+# Local staging directory for artifacts ----------------------------
+# All artifacts are written here first, then uploaded to MLflow.
+# Make sure the directory is on a fast local disk.
+artifacts_dir: ./mlartifacts

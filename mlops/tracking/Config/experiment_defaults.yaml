@@ -1,0 +1,42 @@
+# experiment_defaults.yaml
+# =========================
+# Default values applied to every experiment run by run_experiment.py.
+# Override individual keys via CLI flags (--experiment, --run-name,
+# --params, --tags, --autolog) without editing this file.
+
+# Experiment name --------------------------------------------------
+experiment: medvision_default
+
+# Optional explicit run name (auto-generated when null) -----------
+run_name: null
+
+# Default parameters logged on every run --------------------------
+# Override or extend with --params '{"lr": ...}'
+params:
+  seed: 42
+  batch_size: 32
+  epochs: 10
+  learning_rate: 0.001
+  optimizer: adam
+
+# Default tags applied to every run -------------------------------
+# Merge with --tags '{"model": "..."}'
+tags:
+  project: MedVision-AI
+  domain: healthcare
+  data_split: train
+
+# Enable framework autologging (sklearn, pytorch, etc.) -----------
+autolog: false
+
+# Reproducibility --------------------------------------------------
+# Random seed passed to entrypoints that read it from `params`.
+reproducibility:
+  seed: 42
+  deterministic: true
+
+# Resource limits --------------------------------------------------
+# Helpful for shared GPU clusters; entrypoints should respect them.
+resources:
+  max_train_minutes: 120
+  max_gpus: 1
