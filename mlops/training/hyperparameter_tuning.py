@@ -1,516 +1,380 @@
 """
-HyperparameterTuning - Automated hyperparameter optimisation for MedVision-AI.
+hyperparameter_tuning.py
+=========================
+Hyperparameter search orchestration for MedVision-AI.
 
-Supports random search, grid search, and Bayesian optimisation (via Optuna)
-to find the best hyperparameter configuration for medical imaging models.
+The :class:`HyperparameterTuner` wraps Optuna (when available) and
+provides:
+
+1. A small set of **suggestion templates** for common hyperparameters
+   (learning rate, batch size, optimizer, dropout, model depth, ...)
+   so users do not have to handcraft a search space from scratch.
+2. A single :meth:`run` entrypoint that takes a
+   ``train_fn(trial, params) -> metrics`` callable and returns a
+   structured :class:`TuningReport`.
+3. Integration with the MLOps tracking stack: each trial is logged as
+   a nested MLflow run when ``log_to_mlflow=True``.
+
+When optuna is not installed, the tuner falls back to a random search
+over the configured space — useful for smoke tests on CI where adding
+optuna is undesirable.
 """
 
 from __future__ import annotations
 
-import itertools
 import logging
-import math
 import random
+import statistics
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
+from .training_config import TrainingConfig
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class TuningConfig:
-    """Configuration for hyperparameter tuning.
+TrainFn = Callable[[Any, Mapping[str, Any]], Dict[str, float]]
 
-    Attributes:
-        n_trials: Number of trials for random/Bayesian search.
-        metric: Metric to optimise ('val_loss' or 'val_accuracy').
-        direction: Optimisation direction ('minimize' or 'maximize').
-        timeout: Maximum time in seconds for the entire tuning run.
-        pruning: Whether to enable early pruning of unpromising trials.
-        pruning_patience: Epochs to wait before pruning a trial.
-        seed: Random seed for reproducibility.
-        study_name: Name for the Optuna study.
-        storage: Optuna storage URL (e.g. 'sqlite:///optuna.db').
-    """
 
-    n_trials: int = 50
-    metric: str = "val_loss"
-    direction: str = "minimize"
-    timeout: Optional[float] = None
-    pruning: bool = True
-    pruning_patience: int = 5
-    seed: int = 42
-    study_name: str = "medvision_tuning"
-    storage: Optional[str] = None
+# --------------------------------------------------------------------
+# Report
+# --------------------------------------------------------------------
 
 
 @dataclass
-class BestParams:
-    """Result of a hyperparameter tuning run.
+class TrialResult:
+    """One trial of a hyperparameter search."""
 
-    Attributes:
-        params: The best hyperparameter dictionary found.
-        score: The metric value achieved with the best params.
-        trial_number: The trial index that produced the best result.
-        all_results: List of (params, score) for every completed trial.
-    """
-
+    number: int
     params: Dict[str, Any]
-    score: float
-    trial_number: int = 0
-    all_results: List[Dict[str, Any]] = field(default_factory=list)
+    metrics: Dict[str, float]
+    state: str = "COMPLETE"  # COMPLETE|PRUNED|FAILED
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "number": self.number,
+            "params": dict(self.params),
+            "metrics": dict(self.metrics),
+            "state": self.state,
+        }
 
 
-# Type alias for the model factory function
-ModelFactory = Callable[..., nn.Module]
+@dataclass
+class TuningReport:
+    """Aggregated result of a hyperparameter search."""
+
+    trials: List[TrialResult] = field(default_factory=list)
+    best_params: Dict[str, Any] = field(default_factory=dict)
+    best_metrics: Dict[str, float] = field(default_factory=dict)
+    best_trial_number: int = -1
+    n_complete: int = 0
+    n_failed: int = 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "trials": [t.to_dict() for t in self.trials],
+            "best_params": dict(self.best_params),
+            "best_metrics": dict(self.best_metrics),
+            "best_trial_number": self.best_trial_number,
+            "n_complete": self.n_complete,
+            "n_failed": self.n_failed,
+        }
 
 
+# --------------------------------------------------------------------
+# Suggestion templates
+# --------------------------------------------------------------------
+
+
+def suggest_learning_rate(trial: Any, low: float = 1e-5, high: float = 1e-2) -> float:
+    """Log-uniform learning-rate suggestion."""
+    if hasattr(trial, "suggest_float"):
+        return trial.suggest_float("lr", low, high, log=True)
+    return 10 ** random.uniform(_log10(low), _log10(high))
+
+
+def suggest_batch_size(trial: Any, options: Optional[List[int]] = None) -> int:
+    """Categorical batch-size suggestion (powers of 2)."""
+    options = options or [16, 32, 64, 128]
+    return _suggest_categorical(trial, "batch_size", options)
+
+
+def suggest_optimizer(trial: Any, options: Optional[List[str]] = None) -> str:
+    options = options or ["adam", "sgd", "adamw"]
+    return _suggest_categorical(trial, "optimizer", options)
+
+
+def suggest_dropout(trial: Any, low: float = 0.0, high: float = 0.5) -> float:
+    """Uniform dropout suggestion."""
+    if hasattr(trial, "suggest_float"):
+        return trial.suggest_float("dropout", low, high)
+    return random.uniform(low, high)
+
+
+def suggest_weight_decay(trial: Any, low: float = 1e-6, high: float = 1e-2) -> float:
+    """Log-uniform weight-decay suggestion."""
+    if hasattr(trial, "suggest_float"):
+        return trial.suggest_float("weight_decay", low, high, log=True)
+    return 10 ** random.uniform(_log10(low), _log10(high))
+
+
+# --------------------------------------------------------------------
+# Tuner
+# --------------------------------------------------------------------
+
+
+@dataclass
 class HyperparameterTuner:
-    """Automated hyperparameter optimisation engine.
+    """Orchestrate a hyperparameter search.
 
-    Provides random search, grid search, and Bayesian optimisation strategies
-    to explore the hyperparameter space and identify the best configuration
-    for a given model architecture and dataset.
-
-    Args:
-        config: A TuningConfig instance controlling the search behaviour.
-
-    Example::
-
-        config = TuningConfig(n_trials=30, direction="minimize")
-        tuner = HyperparameterTuner(config)
-        param_space = {"lr": [1e-3, 3e-4, 1e-4], "dropout": [0.1, 0.3, 0.5]}
-        result = tuner.tune(model_fn, param_space, train_loader, val_loader)
+    Attributes
+    ----------
+    n_trials:
+        Total number of trials to run.
+    base_config:
+        :class:`TrainingConfig` to clone for each trial. Trial-specific
+        hyperparameters are merged on top via :meth:`merge_dict`.
+    direction:
+        ``"maximize"`` or ``"minimize"``.
+    monitor_metric:
+        Metric key in the trial result dict to optimize.
+    sampler:
+        Search algorithm. ``"tpe"`` (Tree-structured Parzen Estimator,
+        Optuna default) or ``"random"``.
+    log_to_mlflow:
+        If True, each trial is logged as a nested MLflow run via
+        :class:`mlops.tracking.experiment_logger.ExperimentLogger`.
+    pruner:
+        Optuna pruner name; ``"none"`` (default) disables pruning.
     """
 
-    def __init__(self, config: Optional[TuningConfig] = None) -> None:
-        self.config = config or TuningConfig()
-        random.seed(self.config.seed)
-        torch.manual_seed(self.config.seed)
-        self._results: List[Dict[str, Any]] = []
-        logger.info(
-            "HyperparameterTuner initialised | trials=%d | metric=%s | direction=%s",
-            self.config.n_trials,
-            self.config.metric,
-            self.config.direction,
-        )
+    n_trials: int = 20
+    base_config: Optional[TrainingConfig] = None
+    direction: str = "maximize"
+    monitor_metric: str = "val_accuracy"
+    sampler: str = "tpe"
+    log_to_mlflow: bool = False
+    pruner: str = "none"
 
-    # ------------------------------------------------------------------
-    # Helper: evaluate a single hyperparameter configuration
-    # ------------------------------------------------------------------
-
-    def _evaluate_config(
-        self,
-        model_fn: ModelFactory,
-        params: Dict[str, Any],
-        train_loader: DataLoader,
-        val_loader: DataLoader,
-        num_epochs: int = 5,
-    ) -> float:
-        """Train a model with the given params and return the optimisation metric.
-
-        Args:
-            model_fn: Factory that returns a fresh model instance given params.
-            params: Hyperparameter values to evaluate.
-            train_loader: Training DataLoader.
-            val_loader: Validation DataLoader.
-            num_epochs: Quick-training epochs for evaluation.
-
-        Returns:
-            The metric value (lower is better when direction='minimize').
-        """
-        model = model_fn(**params)
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model = model.to(device)
-
-        lr = params.get("lr", params.get("learning_rate", 1e-4))
-        weight_decay = params.get("weight_decay", 1e-5)
-        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-        criterion = nn.CrossEntropyLoss()
-
-        best_val_metric = float("inf") if self.config.direction == "minimize" else float("-inf")
-        no_improve = 0
-
-        for epoch in range(1, num_epochs + 1):
-            # --- Train ---
-            model.train()
-            for inputs, targets in train_loader:
-                inputs = inputs.to(device, non_blocking=True)
-                targets = targets.to(device, non_blocking=True)
-                optimizer.zero_grad()
-                outputs = model(inputs)
-                loss = criterion(outputs, targets)
-                loss.backward()
-                optimizer.step()
-
-            # --- Validate ---
-            model.eval()
-            total_loss = 0.0
-            total_correct = 0
-            total_samples = 0
-            with torch.no_grad():
-                for inputs, targets in val_loader:
-                    inputs = inputs.to(device, non_blocking=True)
-                    targets = targets.to(device, non_blocking=True)
-                    outputs = model(inputs)
-                    loss = criterion(outputs, targets)
-                    total_loss += loss.item() * inputs.size(0)
-                    preds = outputs.argmax(dim=-1)
-                    total_correct += (preds == targets).sum().item()
-                    total_samples += inputs.size(0)
-
-            val_loss = total_loss / max(total_samples, 1)
-            val_accuracy = total_correct / max(total_samples, 1)
-
-            if self.config.metric == "val_loss":
-                metric_val = val_loss
-                improved = metric_val < best_val_metric
-            else:
-                metric_val = val_accuracy
-                improved = metric_val > best_val_metric
-
-            if improved:
-                best_val_metric = metric_val
-                no_improve = 0
-            else:
-                no_improve += 1
-
-            # Pruning check
-            if self.config.pruning and no_improve >= self.config.pruning_patience:
-                logger.debug("Trial pruned at epoch %d (no improvement)", epoch)
-                break
-
-        return best_val_metric
-
-    def _is_better(self, current: float, reference: float) -> bool:
-        """Check whether *current* is an improvement over *reference*."""
-        if self.config.direction == "minimize":
-            return current < reference
-        return current > reference
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
-    def tune(
-        self,
-        model_fn: ModelFactory,
-        param_space: Dict[str, Any],
-        train_loader: DataLoader,
-        val_loader: DataLoader,
-        num_epochs: int = 5,
-        strategy: str = "bayesian",
-    ) -> BestParams:
-        """Run hyperparameter tuning with the specified strategy.
-
-        Args:
-            model_fn: Factory function that creates a model from params.
-            param_space: Dictionary mapping parameter names to search spaces.
-                - List values indicate discrete choices.
-                - Tuple (low, high) indicates a continuous range.
-            train_loader: Training DataLoader.
-            val_loader: Validation DataLoader.
-            num_epochs: Number of quick-training epochs per trial.
-            strategy: One of 'random', 'grid', or 'bayesian'.
-
-        Returns:
-            A BestParams instance with the best configuration found.
-
-        Raises:
-            ValueError: If an unknown strategy is specified.
-        """
-        self._results = []
-        strategy = strategy.lower()
-
-        if strategy == "random":
-            return self.random_search(
-                model_fn, param_space, train_loader, val_loader, num_epochs
+    def __post_init__(self) -> None:
+        if self.direction not in ("maximize", "minimize"):
+            raise ValueError(
+                f"direction must be 'maximize' or 'minimize', got {self.direction!r}"
             )
-        if strategy == "grid":
-            return self.grid_search(
-                model_fn, param_space, train_loader, val_loader, num_epochs
+        if self.sampler not in ("tpe", "random"):
+            raise ValueError(
+                f"sampler must be 'tpe' or 'random', got {self.sampler!r}"
             )
-        if strategy == "bayesian":
-            return self.bayesian_optimization(
-                model_fn, param_space, train_loader, val_loader, num_epochs
-            )
-        raise ValueError(f"Unknown tuning strategy: {strategy}")
 
-    def random_search(
-        self,
-        model_fn: ModelFactory,
-        param_space: Dict[str, Any],
-        train_loader: DataLoader,
-        val_loader: DataLoader,
-        num_epochs: int = 5,
-    ) -> BestParams:
-        """Perform random search over the hyperparameter space.
+    # ------------------------------------------------------------------
+    # Public entrypoints
+    # ------------------------------------------------------------------
 
-        For each trial, parameter values are sampled uniformly at random
-        from the provided search space.
+    def run(self, search_fn: Callable[[Any], Dict[str, Any]], train_fn: TrainFn) -> TuningReport:
+        """Run ``n_trials`` trials of ``train_fn`` with params from ``search_fn``.
 
-        Args:
-            model_fn: Factory function for model creation.
-            param_space: Search space specification.
-            train_loader: Training DataLoader.
-            val_loader: Validation DataLoader.
-            num_epochs: Epochs per trial.
+        Parameters
+        ----------
+        search_fn:
+            A callable that takes an Optuna trial (or our fallback stub)
+            and returns a params dict.
+        train_fn:
+            A callable ``train_fn(trial, params) -> metrics`` that runs
+            one training trial and returns the evaluation metrics.
 
-        Returns:
-            BestParams with the best found configuration.
+        Returns
+        -------
+        TuningReport
         """
-        best_score = float("inf") if self.config.direction == "minimize" else float("-inf")
-        best_params: Dict[str, Any] = {}
-        best_trial = 0
+        if self._optuna_available() and self.sampler == "tpe":
+            return self._run_optuna(search_fn, train_fn)
+        # Random-search fallback
+        return self._run_random(search_fn, train_fn)
 
-        for trial_idx in range(self.config.n_trials):
-            params = self._sample_params(param_space)
-            logger.info("Random trial %d/%d | params=%s", trial_idx + 1, self.config.n_trials, params)
+    # ------------------------------------------------------------------
+    # Optuna path
+    # ------------------------------------------------------------------
 
-            score = self._evaluate_config(model_fn, params, train_loader, val_loader, num_epochs)
-            self._results.append({"trial": trial_idx, "params": params, "score": score})
-
-            if self._is_better(score, best_score):
-                best_score = score
-                best_params = params
-                best_trial = trial_idx
-                logger.info("  -> New best: %.4f", best_score)
-
-        return BestParams(
-            params=best_params,
-            score=best_score,
-            trial_number=best_trial,
-            all_results=list(self._results),
-        )
-
-    def grid_search(
-        self,
-        model_fn: ModelFactory,
-        param_space: Dict[str, Any],
-        train_loader: DataLoader,
-        val_loader: DataLoader,
-        num_epochs: int = 5,
-    ) -> BestParams:
-        """Perform exhaustive grid search over the hyperparameter space.
-
-        Every combination of parameter values is evaluated. Continuous ranges
-        specified as tuples are discretised into evenly-spaced values.
-
-        Args:
-            model_fn: Factory function for model creation.
-            param_space: Search space specification.
-            train_loader: Training DataLoader.
-            val_loader: Validation DataLoader.
-            num_epochs: Epochs per trial.
-
-        Returns:
-            BestParams with the best found configuration.
-        """
-        grid = self._build_grid(param_space)
-        total = len(grid)
-        logger.info("Grid search: %d combinations", total)
-
-        best_score = float("inf") if self.config.direction == "minimize" else float("-inf")
-        best_params: Dict[str, Any] = {}
-        best_trial = 0
-
-        for idx, params in enumerate(grid):
-            logger.info("Grid trial %d/%d | params=%s", idx + 1, total, params)
-            score = self._evaluate_config(model_fn, params, train_loader, val_loader, num_epochs)
-            self._results.append({"trial": idx, "params": params, "score": score})
-
-            if self._is_better(score, best_score):
-                best_score = score
-                best_params = params
-                best_trial = idx
-                logger.info("  -> New best: %.4f", best_score)
-
-        return BestParams(
-            params=best_params,
-            score=best_score,
-            trial_number=best_trial,
-            all_results=list(self._results),
-        )
-
-    def bayesian_optimization(
-        self,
-        model_fn: ModelFactory,
-        param_space: Dict[str, Any],
-        train_loader: DataLoader,
-        val_loader: DataLoader,
-        num_epochs: int = 5,
-    ) -> BestParams:
-        """Perform Bayesian optimisation using Optuna.
-
-        Uses Tree-structured Parzen Estimators (TPE) to efficiently explore
-        the hyperparameter space by modelling the objective function.
-
-        Args:
-            model_fn: Factory function for model creation.
-            param_space: Search space specification.
-            train_loader: Training DataLoader.
-            val_loader: Validation DataLoader.
-            num_epochs: Epochs per trial.
-
-        Returns:
-            BestParams with the best found configuration.
-
-        Raises:
-            ImportError: If optuna is not installed.
-        """
-        try:
-            import optuna
-            from optuna.pruners import MedianPruner
-            from optuna.samplers import TPESampler
-        except ImportError as exc:
-            raise ImportError(
-                "optuna is required for Bayesian optimisation. "
-                "Install it with: pip install optuna"
-            ) from exc
+    def _run_optuna(self, search_fn: Callable, train_fn: TrainFn) -> TuningReport:
+        import optuna
 
         optuna.logging.set_verbosity(optuna.logging.WARNING)
-
-        sampler = TPESampler(seed=self.config.seed)
-        pruner = MedianPruner(
-            n_startup_trials=5, n_warmup_steps=3, interval_steps=1
-        )
-
-        direction = self.config.direction
+        sampler = optuna.samplers.TPESampler()
+        pruner = None
+        if self.pruner == "median":
+            pruner = optuna.pruners.MedianPruner()
         study = optuna.create_study(
-            study_name=self.config.study_name,
-            storage=self.config.storage,
-            direction=direction,
+            direction=self.direction,
             sampler=sampler,
-            pruner=pruner if self.config.pruning else None,
-            load_if_exists=True,
+            pruner=pruner,
         )
 
-        def _objective(trial: optuna.Trial) -> float:
-            params = self._suggest_params(trial, param_space)
-            return self._evaluate_config(
-                model_fn, params, train_loader, val_loader, num_epochs
+        report = TuningReport()
+
+        def _optuna_objective(trial: "optuna.trial.Trial") -> float:
+            params = search_fn(trial)
+            try:
+                with self._maybe_mlflow_run(params) as ctx:
+                    metrics = train_fn(trial, params)
+                    score = metrics.get(self.monitor_metric)
+                    if score is None:
+                        raise ValueError(
+                            f"trial result missing {self.monitor_metric!r}: {metrics}"
+                        )
+                    state = "COMPLETE"
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Trial failed: %s", exc)
+                metrics = {}
+                score = float("nan")
+                state = "FAILED"
+            result = TrialResult(
+                number=trial.number,
+                params=dict(params),
+                metrics=dict(metrics),
+                state=state,
             )
+            report.trials.append(result)
+            if state == "COMPLETE":
+                report.n_complete += 1
+            else:
+                report.n_failed += 1
+            return score if score == score else float("-inf" if self.direction == "maximize" else "inf")
 
-        study.optimize(
-            _objective,
-            n_trials=self.config.n_trials,
-            timeout=self.config.timeout,
-        )
-
-        best_trial_result = study.best_trial
-        best_params = best_trial_result.params
-        best_score = best_trial_result.value
-
-        # Collect all trial results
-        all_results = [
-            {"trial": t.number, "params": t.params, "score": t.value}
-            for t in study.trials
-            if t.value is not None
-        ]
-        self._results = all_results
-
-        logger.info(
-            "Bayesian optimisation complete | best_score=%.4f | best_params=%s",
-            best_score,
-            best_params,
-        )
-
-        return BestParams(
-            params=best_params,
-            score=best_score,
-            trial_number=best_trial_result.number,
-            all_results=all_results,
-        )
+        study.optimize(_optuna_objective, n_trials=self.n_trials)
+        best = study.best_trial
+        report.best_params = dict(best.params)
+        report.best_trial_number = best.number
+        report.best_metrics = {self.monitor_metric: float(best.value)}
+        return report
 
     # ------------------------------------------------------------------
-    # Parameter sampling utilities
+    # Random-search fallback
     # ------------------------------------------------------------------
 
-    def _sample_params(self, param_space: Dict[str, Any]) -> Dict[str, Any]:
-        """Sample a random configuration from the search space.
-
-        Lists are treated as categorical choices; tuples (low, high) as
-        continuous ranges with uniform sampling.
-        """
-        params: Dict[str, Any] = {}
-        for name, space in param_space.items():
-            if isinstance(space, list):
-                params[name] = random.choice(space)
-            elif isinstance(space, tuple) and len(space) == 2:
-                low, high = space
-                if isinstance(low, int) and isinstance(high, int):
-                    params[name] = random.randint(low, high)
-                else:
-                    params[name] = random.uniform(low, high)
+    def _run_random(self, search_fn: Callable, train_fn: TrainFn) -> TuningReport:
+        report = TuningReport()
+        # ``trial`` here is a tiny shim that proxies suggest_float /
+        # suggest_categorical to random.uniform / random.choice.
+        for i in range(self.n_trials):
+            trial = _RandomTrialStub(i)
+            params = search_fn(trial)
+            try:
+                with self._maybe_mlflow_run(params):
+                    metrics = train_fn(trial, params)
+                    score = metrics.get(self.monitor_metric)
+                    if score is None:
+                        raise ValueError(
+                            f"trial result missing {self.monitor_metric!r}: {metrics}"
+                        )
+                    state = "COMPLETE"
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Trial %d failed: %s", i, exc)
+                metrics = {}
+                score = float("nan")
+                state = "FAILED"
+            report.trials.append(
+                TrialResult(number=i, params=dict(params), metrics=dict(metrics), state=state)
+            )
+            if state == "COMPLETE":
+                report.n_complete += 1
             else:
-                params[name] = space
-        return params
+                report.n_failed += 1
 
-    def _suggest_params(
-        self,
-        trial: Any,
-        param_space: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """Use an Optuna trial to suggest parameters from the search space.
+        # Determine best
+        completed = [t for t in report.trials if t.state == "COMPLETE"]
+        if completed:
+            reverse = self.direction == "maximize"
+            best = max(
+                completed,
+                key=lambda t: t.metrics.get(self.monitor_metric, float("-inf" if reverse else "inf")),
+            )
+            report.best_params = dict(best.params)
+            report.best_metrics = dict(best.metrics)
+            report.best_trial_number = best.number
+        return report
 
-        Args:
-            trial: An active Optuna trial object.
-            param_space: Search space specification.
+    # ------------------------------------------------------------------
+    # MLflow integration
+    # ------------------------------------------------------------------
 
-        Returns:
-            Dictionary of suggested parameter values.
-        """
-        params: Dict[str, Any] = {}
-        for name, space in param_space.items():
-            if isinstance(space, list):
-                params[name] = trial.suggest_categorical(name, space)
-            elif isinstance(space, tuple) and len(space) == 2:
-                low, high = space
-                if isinstance(low, int) and isinstance(high, int):
-                    params[name] = trial.suggest_int(name, low, high)
-                elif isinstance(low, float) or isinstance(high, float):
-                    # Detect log-scale for learning rates
-                    log = low > 0 and high > 0 and high / low > 100
-                    params[name] = trial.suggest_float(name, low, high, log=log)
-                else:
-                    params[name] = trial.suggest_categorical(name, [low, high])
-            else:
-                params[name] = space
-        return params
+    def _optuna_available(self) -> bool:
+        try:
+            import optuna  # noqa: F401
 
-    def _build_grid(self, param_space: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Build an exhaustive grid from the parameter space.
+            return True
+        except ImportError:
+            return False
 
-        Continuous ranges are discretised into 5 evenly-spaced values.
-        """
-        discretised: Dict[str, List[Any]] = {}
-        grid_points = 5
+    @contextmanager
+    def _maybe_mlflow_run(self, params: Mapping[str, Any]):
+        """If log_to_mlflow is True, run train_fn inside a nested MLflow run."""
+        if not self.log_to_mlflow:
+            yield None
+            return
+        from mlops.tracking.experiment_logger import ExperimentLogger
 
-        for name, space in param_space.items():
-            if isinstance(space, list):
-                discretised[name] = space
-            elif isinstance(space, tuple) and len(space) == 2:
-                low, high = space
-                if isinstance(low, int) and isinstance(high, int):
-                    step = max(1, (high - low) // (grid_points - 1))
-                    discretised[name] = list(range(low, high + 1, step))
-                else:
-                    discretised[name] = [
-                        round(v, 6)
-                        for v in [
-                            low + i * (high - low) / (grid_points - 1)
-                            for i in range(grid_points)
-                        ]
-                    ]
-            else:
-                discretised[name] = [space]
+        with ExperimentLogger(
+            experiment="medvision_hpo",
+            run_name=f"trial_{params!r}"[:80],
+            tags={"sampler": self.sampler, "monitor": self.monitor_metric},
+            nested=True,
+        ) as run:
+            run.log_params({k: str(v) for k, v in params.items()})
+            yield run
 
-        keys = list(discretised.keys())
-        values = list(discretised.values())
-        combinations = list(itertools.product(*values))
 
-        return [dict(zip(keys, combo)) for combo in combinations]
+# --------------------------------------------------------------------
+# Random-search trial stub
+# --------------------------------------------------------------------
+
+
+class _RandomTrialStub:
+    """Minimal Optuna-trial-like object backed by ``random``.
+
+    Only implements the methods used by the suggestion templates above.
+    """
+
+    def __init__(self, number: int) -> None:
+        self.number = number
+
+    def suggest_float(self, name: str, low: float, high: float, log: bool = False) -> float:
+        if log:
+            return 10 ** random.uniform(_log10(low), _log10(high))
+        return random.uniform(low, high)
+
+    def suggest_int(self, name: str, low: int, high: int) -> int:
+        return random.randint(low, high)
+
+    def suggest_categorical(self, name: str, choices: List[Any]) -> Any:
+        return random.choice(choices)
+
+    def report(self, *args, **kwargs) -> None:  # pragma: no cover
+        pass
+
+    def should_prune(self) -> bool:  # pragma: no cover
+        return False
+
+
+def _suggest_categorical(trial: Any, name: str, options: List[Any]) -> Any:
+    if hasattr(trial, "suggest_categorical"):
+        return trial.suggest_categorical(name, options)
+    return random.choice(options)
+
+
+def _log10(x: float) -> float:
+    import math
+
+    return math.log10(x)
+
+
+__all__ = [
+    "HyperparameterTuner",
+    "TrialResult",
+    "TuningReport",
+    "TrainFn",
+    "suggest_learning_rate",
+    "suggest_batch_size",
+    "suggest_optimizer",
+    "suggest_dropout",
+    "suggest_weight_decay",
+]
