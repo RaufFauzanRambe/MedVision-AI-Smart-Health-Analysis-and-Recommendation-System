@@ -1,380 +1,165 @@
 """
-MLflowConfig - MLflow integration for MedVision-AI experiment tracking.
+mlflow_config.py
+================
+Centralized MLflow configuration for the MedVision-AI project.
 
-Provides a configuration-driven interface to MLflow for logging parameters,
-metrics, models, and artifacts during training and evaluation runs.
+This module is responsible for:
+  * Loading tracking configuration from YAML files.
+  * Initializing the MLflow tracking URI, experiment name, and registry URI.
+  * Providing a singleton-style accessor so that all modules share the
+    same MLflow client and experiment context.
+
+Typical usage:
+
+    from mlops.tracking.mlflow_config import get_mlflow_config
+
+    cfg = get_mlflow_config()
+    cfg.setup()  # configures mlflow.set_tracking_uri, set_experiment, etc.
+
+The configuration file location can be overridden via the
+``MEDVISION_TRACKING_CONFIG`` environment variable. By default the module
+looks for ``configs/tracking.yaml`` relative to this file.
 """
 
 from __future__ import annotations
 
-import logging
+import os
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, Optional
 
-logger = logging.getLogger(__name__)
+import yaml
+
+try:
+    import mlflow
+except ImportError:  # pragma: no cover - mlflow is optional at import time
+    mlflow = None  # type: ignore[assignment]
 
 
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "configs" / "tracking.yaml"
+ENV_CONFIG_PATH = os.environ.get("MEDVISION_TRACKING_CONFIG")
+
+
+@dataclass
 class MLflowConfig:
-    """MLflow configuration and interaction manager.
+    """Runtime representation of the tracking configuration.
 
-    Wraps the MLflow Python client to provide a simplified, typed interface
-    for experiment management, run tracking, parameter/metric logging, model
-    registration, and artifact storage.
-
-    Args:
-        tracking_uri: URI of the MLflow tracking server
-            (e.g. 'http://localhost:5000' or 'sqlite:///mlflow.db').
-        experiment_name: Name of the experiment to create or use.
-
-    Example::
-
-        mlflow_cfg = MLflowConfig(
-            tracking_uri="sqlite:///mlflow.db",
-            experiment_name="medvision-classification",
-        )
-        mlflow_cfg.setup()
-        mlflow_cfg.log_params({"lr": 0.001, "epochs": 30})
-        mlflow_cfg.log_metrics({"accuracy": 0.95}, step=1)
+    Attributes
+    ----------
+    tracking_uri:
+        Where MLflow should store runs. May be a local path
+        (``file:///...``), an HTTP/HTTPS tracking server URL, or a
+        Databricks profile.
+    registry_uri:
+        Optional model registry URI. Defaults to ``tracking_uri`` when
+        not provided.
+    experiment_name:
+        Default experiment name used when callers do not specify one.
+    run_name_prefix:
+        Optional prefix applied to every run created through
+        ``experiment_logger``.
+    tags:
+        Default tags applied to every run. Useful for stamping
+        environment info (e.g. ``git_branch``, ``host``).
+    autolog:
+        Whether to enable ``mlflow.<framework>.autolog()`` automatically.
+        Currently only a boolean toggle; framework-specific autolog is
+        invoked inside ``experiment_logger``.
+    artifacts_dir:
+        Local directory used as a staging area before artifacts are
+        logged to MLflow.
     """
 
-    def __init__(
-        self,
-        tracking_uri: str = "sqlite:///mlflow.db",
-        experiment_name: str = "MedVision-AI",
-    ) -> None:
-        self.tracking_uri = tracking_uri
-        self.experiment_name = experiment_name
-        self._experiment_id: Optional[str] = None
-        self._active_run_id: Optional[str] = None
-        self._mlflow = None
-        self._client = None
+    tracking_uri: str = "file:///tmp/mlruns"
+    registry_uri: Optional[str] = None
+    experiment_name: str = "medvision_default"
+    run_name_prefix: str = "medvision"
+    tags: Dict[str, str] = field(default_factory=dict)
+    autolog: bool = False
+    artifacts_dir: str = "./mlartifacts"
 
-    # ------------------------------------------------------------------
-    # Setup
-    # ------------------------------------------------------------------
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "MLflowConfig":
+        """Build a :class:`MLflowConfig` from a plain dictionary."""
+        known = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
+        return cls(**known)
 
-    def setup(self) -> str:
-        """Initialise MLflow and set up the experiment.
+    @classmethod
+    def from_yaml(cls, path: str | Path) -> "MLflowConfig":
+        """Load configuration from a YAML file."""
+        path = Path(path)
+        if not path.exists():
+            raise FileNotFoundError(f"Tracking config not found: {path}")
+        with path.open("r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+        return cls.from_dict(data)
 
-        Sets the tracking URI, creates the experiment if it doesn't exist,
-        and returns the experiment ID.
-
-        Returns:
-            The MLflow experiment ID.
-
-        Raises:
-            ImportError: If mlflow is not installed.
-        """
-        try:
-            import mlflow
-            from mlflow.tracking import MlflowClient
-        except ImportError as exc:
-            raise ImportError(
-                "mlflow is required for experiment tracking. "
-                "Install it with: pip install mlflow"
-            ) from exc
-
-        self._mlflow = mlflow
-        self._client = MlflowClient(tracking_uri=self.tracking_uri)
-        mlflow.set_tracking_uri(self.tracking_uri)
-
-        experiment = mlflow.get_experiment_by_name(self.experiment_name)
-        if experiment is None:
-            self._experiment_id = mlflow.create_experiment(self.experiment_name)
-            logger.info(
-                "Created MLflow experiment '%s' (id=%s)",
-                self.experiment_name,
-                self._experiment_id,
-            )
-        else:
-            self._experiment_id = experiment.experiment_id
-            logger.info(
-                "Using existing MLflow experiment '%s' (id=%s)",
-                self.experiment_name,
-                self._experiment_id,
-            )
-
-        mlflow.set_experiment(self.experiment_name)
-        return self._experiment_id
-
-    # ------------------------------------------------------------------
-    # Run management
-    # ------------------------------------------------------------------
-
-    def start_run(
-        self,
-        run_name: Optional[str] = None,
-        tags: Optional[Dict[str, str]] = None,
-    ) -> str:
-        """Start a new MLflow run within the configured experiment.
-
-        Args:
-            run_name: Human-readable name for the run.
-            tags: Optional dictionary of tags to attach.
-
-        Returns:
-            The run ID of the newly created run.
-        """
-        if self._mlflow is None:
-            self.setup()
-
-        run = self._mlflow.start_run(
-            run_name=run_name,
-            experiment_id=self._experiment_id,
-            tags=tags,
-        )
-        self._active_run_id = run.info.run_id
-        logger.info("MLflow run started: %s (id=%s)", run_name, self._active_run_id)
-        return self._active_run_id
-
-    def end_run(self, status: str = "FINISHED") -> None:
-        """End the active MLflow run.
-
-        Args:
-            status: Run status string (e.g. 'FINISHED', 'FAILED', 'KILLED').
-        """
-        if self._mlflow is not None and self._mlflow.active_run() is not None:
-            self._mlflow.end_run(status=status)
-            logger.info("MLflow run ended: %s (status=%s)", self._active_run_id, status)
-        self._active_run_id = None
-
-    def get_run(self, run_id: str) -> Dict[str, Any]:
-        """Retrieve metadata and data for a specific run.
-
-        Args:
-            run_id: The MLflow run ID.
-
-        Returns:
-            Dictionary containing run info, params, metrics, and tags.
-
-        Raises:
-            ImportError: If MLflow is not set up.
-        """
-        if self._client is None:
-            self.setup()
-
-        run = self._client.get_run(run_id)
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize the config back to a plain dict (for logging)."""
         return {
-            "run_id": run.info.run_id,
-            "status": run.info.status,
-            "start_time": run.info.start_time,
-            "end_time": run.info.end_time,
-            "params": run.data.params,
-            "metrics": run.data.metrics,
-            "tags": run.data.tags,
-            "artifact_uri": run.info.artifact_uri,
+            "tracking_uri": self.tracking_uri,
+            "registry_uri": self.registry_uri,
+            "experiment_name": self.experiment_name,
+            "run_name_prefix": self.run_name_prefix,
+            "tags": dict(self.tags),
+            "autolog": self.autolog,
+            "artifacts_dir": self.artifacts_dir,
         }
 
-    # ------------------------------------------------------------------
-    # Parameter & Metric logging
-    # ------------------------------------------------------------------
+    def setup(self) -> None:
+        """Apply this configuration to the global MLflow runtime.
 
-    def log_params(self, params: Dict[str, Any]) -> None:
-        """Log a batch of parameters to the active run.
-
-        Parameter values are converted to strings as required by MLflow.
-
-        Args:
-            params: Dictionary of parameter names to values.
+        Raises
+        ------
+        RuntimeError
+            If ``mlflow`` is not installed.
         """
-        if self._mlflow is None:
-            self.setup()
-
-        str_params = {k: str(v) for k, v in params.items()}
-        self._mlflow.log_params(str_params)
-        logger.debug("Logged %d parameters: %s", len(str_params), list(str_params.keys()))
-
-    def log_metrics(
-        self,
-        metrics: Dict[str, float],
-        step: Optional[int] = None,
-    ) -> None:
-        """Log a batch of metrics to the active run.
-
-        Args:
-            metrics: Dictionary of metric names to float values.
-            step: Optional step number for time-series metrics.
-        """
-        if self._mlflow is None:
-            self.setup()
-
-        self._mlflow.log_metrics(metrics, step=step)
-        logger.debug(
-            "Logged %d metrics at step %s: %s",
-            len(metrics),
-            step,
-            list(metrics.keys()),
-        )
-
-    # ------------------------------------------------------------------
-    # Model logging
-    # ------------------------------------------------------------------
-
-    def log_model(
-        self,
-        model: Any,
-        name: str,
-        flavor: str = "pytorch",
-        conda_env: Optional[Dict[str, Any]] = None,
-        registered_model_name: Optional[str] = None,
-        **kwargs: Any,
-    ) -> str:
-        """Log a model to MLflow with the specified flavor.
-
-        Args:
-            model: The model object to log.
-            name: Artifact path within the run.
-            flavor: MLflow model flavor ('pytorch', 'sklearn', 'tensorflow', etc.).
-            conda_env: Conda environment specification for reproducibility.
-            registered_model_name: If provided, register the model in the Model Registry.
-            **kwargs: Additional arguments passed to the flavor-specific log function.
-
-        Returns:
-            The artifact URI of the logged model.
-
-        Raises:
-            ValueError: If an unsupported flavor is specified.
-        """
-        if self._mlflow is None:
-            self.setup()
-
-        flavor_lower = flavor.lower()
-
-        if flavor_lower == "pytorch":
-            log_fn = self._mlflow.pytorch.log_model
-            log_fn(
-                model,
-                artifact_path=name,
-                conda_env=conda_env,
-                registered_model_name=registered_model_name,
-                **kwargs,
+        if mlflow is None:  # pragma: no cover
+            raise RuntimeError(
+                "mlflow is not installed. Install with `pip install mlflow`."
             )
-        elif flavor_lower == "sklearn":
-            log_fn = self._mlflow.sklearn.log_model
-            log_fn(
-                model,
-                artifact_path=name,
-                conda_env=conda_env,
-                registered_model_name=registered_model_name,
-                **kwargs,
-            )
-        elif flavor_lower == "tensorflow":
-            log_fn = self._mlflow.tensorflow.log_model
-            log_fn(
-                model,
-                artifact_path=name,
-                conda_env=conda_env,
-                registered_model_name=registered_model_name,
-                **kwargs,
-            )
-        else:
-            # Fallback: use generic mlflow.log_artifact for custom models
-            import tempfile
+        mlflow.set_tracking_uri(self.tracking_uri)
+        if self.registry_uri:
+            mlflow.set_registry_uri(self.registry_uri)
+        mlflow.set_experiment(self.experiment_name)
+        os.makedirs(self.artifacts_dir, exist_ok=True)
 
-            with tempfile.TemporaryDirectory() as tmpdir:
-                import torch
 
-                model_path = Path(tmpdir) / f"{name}.pt"
-                torch.save(model.state_dict() if hasattr(model, "state_dict") else model, model_path)
-                self._mlflow.log_artifact(str(model_path), artifact_path=name)
+_CONFIG_SINGLETON: Optional[MLflowConfig] = None
 
-        artifact_uri = f"{self._mlflow.active_run().info.artifact_uri}/{name}"
-        logger.info("Model logged as '%s' (flavor=%s) at %s", name, flavor, artifact_uri)
-        return artifact_uri
 
-    # ------------------------------------------------------------------
-    # Artifact logging
-    # ------------------------------------------------------------------
+def get_mlflow_config(config_path: Optional[str | Path] = None) -> MLflowConfig:
+    """Return the shared :class:`MLflowConfig` instance.
 
-    def log_artifact(self, path: str, artifact_path: Optional[str] = None) -> None:
-        """Log a local file or directory as an artifact.
+    The first call loads the configuration from disk (using either the
+    provided path, the ``MEDVISION_TRACKING_CONFIG`` environment
+    variable, or the default ``configs/tracking.yaml``). Subsequent
+    calls return the cached singleton so that all modules see the same
+    MLflow settings.
 
-        Args:
-            path: Local path to the file or directory to log.
-            artifact_path: Optional subdirectory within the run's artifact store.
-        """
-        if self._mlflow is None:
-            self.setup()
+    Parameters
+    ----------
+    config_path:
+        Optional explicit path to a YAML configuration file. When
+        provided, the singleton is refreshed using this file.
+    """
+    global _CONFIG_SINGLETON
+    if config_path is not None or _CONFIG_SINGLETON is None:
+        path = Path(config_path or ENV_CONFIG_PATH or DEFAULT_CONFIG_PATH)
+        _CONFIG_SINGLETON = MLflowConfig.from_yaml(path)
+    return _CONFIG_SINGLETON
 
-        file_path = Path(path)
-        if file_path.is_dir():
-            self._mlflow.log_artifacts(path, artifact_path=artifact_path)
-        else:
-            self._mlflow.log_artifact(path, artifact_path=artifact_path)
 
-        logger.info("Artifact logged: %s -> %s", path, artifact_path or "root")
+def reset_mlflow_config() -> None:
+    """Drop the cached singleton. Primarily useful for unit tests."""
+    global _CONFIG_SINGLETON
+    _CONFIG_SINGLETON = None
 
-    def log_artifacts(self, directory: str, artifact_path: Optional[str] = None) -> None:
-        """Log all files in a directory as artifacts.
 
-        Args:
-            directory: Local directory containing artifacts.
-            artifact_path: Optional subdirectory within the run's artifact store.
-        """
-        if self._mlflow is None:
-            self.setup()
-
-        self._mlflow.log_artifacts(directory, artifact_path=artifact_path)
-        logger.info("Artifacts logged from directory: %s", directory)
-
-    # ------------------------------------------------------------------
-    # Search & Query
-    # ------------------------------------------------------------------
-
-    def search_runs(
-        self,
-        filter_string: str = "",
-        order_by: Optional[List[str]] = None,
-        max_results: int = 100,
-    ) -> List[Dict[str, Any]]:
-        """Search for runs in the configured experiment.
-
-        Args:
-            filter_string: MLflow filter expression (e.g. "metrics.accuracy > 0.9").
-            order_by: List of metric/param keys to order by.
-            max_results: Maximum number of runs to return.
-
-        Returns:
-            List of run dictionaries with info, params, and metrics.
-        """
-        if self._client is None:
-            self.setup()
-
-        runs = self._client.search_runs(
-            experiment_ids=[self._experiment_id],
-            filter_string=filter_string,
-            order_by=order_by or [],
-            max_results=max_results,
-        )
-
-        return [
-            {
-                "run_id": r.info.run_id,
-                "status": r.info.status,
-                "start_time": r.info.start_time,
-                "params": r.data.params,
-                "metrics": r.data.metrics,
-            }
-            for r in runs
-        ]
-
-    # ------------------------------------------------------------------
-    # Properties
-    # ------------------------------------------------------------------
-
-    @property
-    def experiment_id(self) -> Optional[str]:
-        """The current MLflow experiment ID."""
-        return self._experiment_id
-
-    @property
-    def active_run_id(self) -> Optional[str]:
-        """The currently active MLflow run ID."""
-        return self._active_run_id
-
-    @property
-    def artifact_uri(self) -> Optional[str]:
-        """The artifact URI for the active run."""
-        if self._mlflow is not None and self._mlflow.active_run() is not None:
-            return self._mlflow.active_run().info.artifact_uri
-        return None
+__all__ = [
+    "MLflowConfig",
+    "get_mlflow_config",
+    "reset_mlflow_config",
+    "DEFAULT_CONFIG_PATH",
+    "ENV_CONFIG_PATH",
+]
