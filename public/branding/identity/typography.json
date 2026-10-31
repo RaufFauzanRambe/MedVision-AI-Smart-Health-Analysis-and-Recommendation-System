@@ -1,0 +1,83 @@
+{
+  "$schema": "https://medvision-ai.example/schemas/typography.v1.json",
+  "name": "MedVision-AI Typography System",
+  "version": "1.0.0",
+  "updatedAt": "2026-10-31",
+  "description": "Canonical type tokens, scale, and font-loading strategy for MedVision-AI products and marketing.",
+  "families": {
+    "primary": {
+      "name": "Inter",
+      "category": "Sans-serif",
+      "fallbacks": ["-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "Helvetica Neue", "Arial", "sans-serif"],
+      "weights": [400, 500, 600, 700],
+      "styles": ["normal", "italic"],
+      "loadFrom": "https://rsms.me/inter/font-files/Inter.var.woff2",
+      "variable": true,
+      "supports": ["Latin", "Latin Extended", "Cyrillic", "Greek", "Vietnamese"],
+      "use": "Body, UI, buttons, labels, captions, in-app text."
+    },
+    "display": {
+      "name": "Sora",
+      "category": "Sans-serif (geometric)",
+      "fallbacks": ["Inter", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "sans-serif"],
+      "weights": [600, 700, 800],
+      "styles": ["normal"],
+      "loadFrom": "https://fonts.gstatic.com/s/sora/v12/xMQOuFFiT72jw0YrC9IzYGoogle.woff2",
+      "variable": true,
+      "use": "Hero headlines, presentation covers, large print headings."
+    },
+    "mono": {
+      "name": "JetBrains Mono",
+      "category": "Monospace",
+      "fallbacks": ["SFMono-Regular", "Consolas", "Liberation Mono", "Menlo", "monospace"],
+      "weights": [400, 500, 700],
+      "styles": ["normal", "italic"],
+      "loadFrom": "https://fonts.gstatic.com/s/jetbrainsmono/v18/tDbY2o-flEEny0FZhsfKu5WU4zrC.woff2",
+      "variable": true,
+      "use": "Code blocks, API responses, log lines, terminal output, technical tables."
+    }
+  },
+  "scale": [
+    { "token": "display",  "size": 56, "lineHeight": 64, "weight": 700, "family": "display", "tracking": -0.02,  "use": "Landing hero headline" },
+    { "token": "h1",       "size": 40, "lineHeight": 48, "weight": 700, "family": "primary", "tracking": -0.01,  "use": "Page title" },
+    { "token": "h2",       "size": 32, "lineHeight": 40, "weight": 700, "family": "primary", "tracking": -0.005, "use": "Section title" },
+    { "token": "h3",       "size": 24, "lineHeight": 32, "weight": 600, "family": "primary", "tracking": 0,      "use": "Subsection title" },
+    { "token": "h4",       "size": 20, "lineHeight": 28, "weight": 600, "family": "primary", "tracking": 0,      "use": "Card title" },
+    { "token": "body-lg",  "size": 18, "lineHeight": 28, "weight": 400, "family": "primary", "tracking": 0,      "use": "Lead paragraph" },
+    { "token": "body",     "size": 16, "lineHeight": 24, "weight": 400, "family": "primary", "tracking": 0,      "use": "Default body" },
+    { "token": "body-sm",  "size": 14, "lineHeight": 22, "weight": 400, "family": "primary", "tracking": 0,      "use": "Compact body" },
+    { "token": "caption",  "size": 13, "lineHeight": 20, "weight": 500, "family": "primary", "tracking": 0,      "use": "Caption, metadata" },
+    { "token": "overline", "size": 12, "lineHeight": 16, "weight": 600, "family": "primary", "tracking": 0.12,  "uppercase": true, "use": "Section eyebrow" },
+    { "token": "code",     "size": 14, "lineHeight": 22, "weight": 400, "family": "mono",    "tracking": 0,      "use": "Inline and block code" }
+  ],
+  "numericKPI": {
+    "family": "display",
+    "weight": 700,
+    "tracking": -0.02,
+    "tabularNums": true,
+    "sizes": { "sm": 32, "md": 48, "lg": 64, "xl": 96 }
+  },
+  "fontFeatures": {
+    "primary": ["cv11", "ss01", "cv02"],
+    "mono": ["calt", "zero", "ss01"]
+  },
+  "loading": {
+    "strategy": "font-display: swap",
+    "preload": ["Inter.var.woff2", "Sora.woff2"],
+    "selfHost": true,
+    "cdn": "https://cdn.medvision-ai.example/fonts/"
+  },
+  "internationalization": {
+    "defaultLocale": "en-US",
+    "supportedLocales": ["en-US", "es-ES", "fr-FR", "de-DE", "zh-CN", "ja-JP", "pt-BR"],
+    "rtl": false,
+    "cjkFallback": ["Noto Sans SC", "Noto Sans JP", "Noto Sans KR", "PingFang SC", "Hiragino Sans"]
+  },
+  "guidance": [
+    "Headlines never exceed three lines on a single viewport. If they do, drop one tier in the scale.",
+    "Use tabular numbers for any KPI, table, or chart axis label so values don't shift during updates.",
+    "Italic is reserved for citing medical terminology or foreign phrases; never use it for emphasis. Use Semibold instead.",
+    "Avoid all-caps body copy. Overline is the only place all-caps is allowed.",
+    "Numbers in clinical content always use the locale of the viewer, not the author."
+  ]
+}

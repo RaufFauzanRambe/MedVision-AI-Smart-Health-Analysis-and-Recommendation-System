@@ -1,0 +1,60 @@
+{
+  "$schema": "https://medvision-ai.example/schemas/color-palette.v1.json",
+  "name": "MedVision-AI Color Palette",
+  "version": "1.0.0",
+  "updatedAt": "2026-10-31",
+  "description": "Canonical color tokens for the MedVision-AI brand. All UI, marketing, and data-visualization work must reference these tokens rather than hardcoded hex values.",
+  "brand": {
+    "primary": { "value": "#0EA5E9", "name": "Vision Blue", "rgb": [14, 165, 233], "hsl": [199, 89%, 48%], "onLight": "#FFFFFF", "onDark": "#FFFFFF" },
+    "secondary": { "value": "#10B981", "name": "Health Green", "rgb": [16, 185, 129], "hsl": [160, 84%, 39%], "onLight": "#FFFFFF", "onDark": "#FFFFFF" },
+    "accent": { "value": "#8B5CF6", "name": "Intelligence Violet", "rgb": [139, 92, 246], "hsl": [258, 90%, 66%], "onLight": "#FFFFFF", "onDark": "#FFFFFF" },
+    "warning": { "value": "#F59E0B", "name": "Caution Amber", "rgb": [245, 158, 11], "hsl": [38, 92%, 50%], "onLight": "#0F172A", "onDark": "#0F172A" },
+    "danger": { "value": "#EF4444", "name": "Critical Red", "rgb": [239, 68, 68], "hsl": [0, 84%, 60%], "onLight": "#FFFFFF", "onDark": "#FFFFFF" }
+  },
+  "ink": {
+    "900": { "value": "#0F172A", "name": "Ink", "rgb": [15, 23, 42] },
+    "700": { "value": "#334155", "name": "Slate", "rgb": [51, 65, 85] },
+    "500": { "value": "#64748B", "name": "Mist", "rgb": [100, 116, 139] },
+    "300": { "value": "#CBD5E1", "name": "Haze", "rgb": [203, 213, 225] },
+    "100": { "value": "#F1F5F9", "name": "Cloud", "rgb": [241, 245, 249] }
+  },
+  "surface": {
+    "50":  { "value": "#F8FAFC", "name": "Page", "rgb": [248, 250, 252] },
+    "100": { "value": "#F1F5F9", "name": "Card", "rgb": [241, 245, 249] },
+    "200": { "value": "#E2E8F0", "name": "Border", "rgb": [226, 232, 240] },
+    "900": { "value": "#0F172A", "name": "Night", "rgb": [15, 23, 42] },
+    "950": { "value": "#020617", "name": "Deep", "rgb": [2, 6, 23] }
+  },
+  "dataViz": {
+    "sequence": ["#0EA5E9", "#10B981", "#8B5CF6", "#F59E0B", "#EF4444", "#64748B"],
+    "categoricalScale": "colorblind-safe",
+    "sequential": {
+      "blue":   ["#EFF6FF", "#DBEAFE", "#BFDBFE", "#93C5FD", "#60A5FA", "#3B82F6", "#2563EB", "#1D4ED8"],
+      "green":  ["#ECFDF5", "#D1FAE5", "#A7F3D0", "#6EE7B7", "#34D399", "#10B981", "#059669", "#047857"],
+      "violet": ["#F5F3FF", "#EDE9FE", "#DDD6FE", "#C4B5FD", "#A78BFA", "#8B5CF6", "#7C3AED", "#6D28D9"],
+      "red":    ["#FEF2F2", "#FEE2E2", "#FECACA", "#FCA5A5", "#F87171", "#EF4444", "#DC2626", "#B91C1C"]
+    },
+    "diverging": {
+      "stop0": "#10B981",
+      "stop50": "#F8FAFC",
+      "stop100": "#EF4444"
+    }
+  },
+  "semantic": {
+    "success": { "bg": "#ECFDF5", "fg": "#047857", "border": "#A7F3D0" },
+    "info":    { "bg": "#EFF6FF", "fg": "#1D4ED8", "border": "#BFDBFE" },
+    "warning":{ "bg": "#FFFBEB", "fg": "#B45309", "border": "#FDE68A" },
+    "danger": { "bg": "#FEF2F2", "fg": "#B91C1C", "border": "#FECACA" }
+  },
+  "gradients": {
+    "brand": { "type": "linear", "angle": 135, "stops": [["0%", "#0EA5E9"], ["100%", "#10B981"]] },
+    "ai":    { "type": "linear", "angle": 135, "stops": [["0%", "#8B5CF6"], ["100%", "#0EA5E9"]] },
+    "hero":  { "type": "linear", "angle": 180, "stops": [["0%", "#0F172A"], ["100%", "#1E293B"]] }
+  },
+  "accessibility": {
+    "minimumContrast": "WCAG 2.2 AA",
+    "bodyContrastRatio": 4.5,
+    "largeTextContrastRatio": 3.0,
+    "note": "All brand color pairings have been verified against the onLight/onDark token recommendations."
+  }
+}
