@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 64" role="img" aria-label="MedVision-AI white logo">
+  <g>
+    <rect x="2" y="10" width="44" height="44" rx="11" fill="#FFFFFF"/>
+    <path d="M14 32 L20 32 L23 22 L27 42 L30 32 L36 32" fill="none" stroke="#0EA5E9" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="38" cy="22" r="3.4" fill="#0EA5E9"/>
+  </g>
+  <text x="58" y="32" font-family="Inter, Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#FFFFFF">
+    <tspan>MedVision</tspan><tspan fill="#7DD3FC">-AI</tspan>
+  </text>
+  <text x="58" y="50" font-family="Inter, Helvetica, Arial, sans-serif" font-size="9" font-weight="500" letter-spacing="2.2" fill="#CBD5E1">
+    SMART HEALTH ANALYSIS
+  </text>
+</svg>

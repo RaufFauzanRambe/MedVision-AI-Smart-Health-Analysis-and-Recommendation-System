@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="MedVision-AI icon">
+  <defs>
+    <linearGradient id="mvIconGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0EA5E9"/>
+      <stop offset="100%" stop-color="#10B981"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#mvIconGrad)"/>
+  <path d="M14 34 L22 34 L26 20 L32 46 L36 34 L46 34" fill="none" stroke="#FFFFFF" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="48" cy="20" r="4.4" fill="#FFFFFF"/>
+  <path d="M48 16 L48 13 M48 27 L48 24 M44 20 L41 20 M55 20 L52 20" stroke="#0EA5E9" stroke-width="1.6" stroke-linecap="round"/>
+</svg>
