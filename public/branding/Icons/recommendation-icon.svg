@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none" stroke="#F59E0B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Recommendation icon">
+  <path d="M24 6 L36 12 L36 24 C36 32 30 38 24 42 C18 38 12 32 12 24 L12 12 Z"/>
+  <path d="M18 24 L22 28 L30 18" stroke="#10B981"/>
+  <circle cx="24" cy="24" r="14" stroke-dasharray="3 4" opacity="0.4"/>
+</svg>
